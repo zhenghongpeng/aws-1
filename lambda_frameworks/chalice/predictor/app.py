@@ -2,6 +2,7 @@ from chalice import Chalice
 from chalice import BadRequestError
 import base64, os, boto3, ast
 import numpy as np
+import json
 
 app = Chalice(app_name='predictor')
 app.debug=True
@@ -15,29 +16,46 @@ def index():
     if 'ENDPOINT_NAME' not in os.environ:
         raise BadRequestError('Missing endpoint')
 
-    image = base64.b64decode(body['data']) # byte array
-    endpoint = os.environ['ENDPOINT_NAME'] 
+    text = body['data'] 
+    endpoint = os.environ['ENDPOINT_NAME']
 
-    if 'topk' not in body:
-        topk = 257
-    else:
-        topk = body['topk']
+    payload = {
+    "text_inputs": f"what is 'Product Name' and company name {text}",
+    "max_length": 50,
+    "max_time": 50,
+    "num_return_sequences": 1,
+    "top_k": 1,
+    "top_p": 1,
+    "do_sample": True,
+    }
 
-    print("%s %d" % (endpoint, topk))
 
-    runtime = boto3.Session().client(service_name='sagemaker-runtime', region_name='us-east-1')
-    response = runtime.invoke_endpoint(EndpointName=endpoint, ContentType='application/x-image', Body=image)
-    probs = response['Body'].read().decode() # byte array
+    endpoint_name = 'jumpstart-example-huggingface-text2text-2023-05-09-16-58-04-093'
+    runtime = boto3.Session().client(service_name='runtime.sagemaker',region_name='us-east-1')
 
-    probs = ast.literal_eval(probs) # array of floats
-    probs = np.array(probs) # numpy array of floats
+    def query_endpoint_with_json_payload(encoded_json, endpoint_name):
+        client = boto3.client("runtime.sagemaker")
+        response = client.invoke_endpoint(
+            EndpointName=endpoint_name, ContentType="application/json", Body=encoded_json
+        )
+        return response
 
-    topk_indexes = probs.argsort() # indexes in ascending order of probabilities
-    topk_indexes = topk_indexes[::-1][:topk] # indexes for top k probabilities in descending order
 
-    topk_categories = []
-    for i in topk_indexes:
-       topk_categories.append((i+1, probs[i]))
+    query_response = query_endpoint_with_json_payload(
+        json.dumps(payload).encode("utf-8"), endpoint_name=endpoint_name
+    )
 
-    return {'response': str(topk_categories)}
+
+    def parse_response_multiple_texts(query_response):
+        model_predictions = json.loads(query_response["Body"].read())
+        generated_text = model_predictions["generated_texts"]
+        return generated_text
+
+
+    # response = runtime.invoke_endpoint(EndpointName=endpoint_name, ContentType='application/json', Body=payload)
+    # print(response['Body'].read())
+
+    generated_texts = parse_response_multiple_texts(query_response)
+    print(generated_texts)
+    return generated_texts
 
